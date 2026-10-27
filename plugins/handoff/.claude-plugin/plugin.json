@@ -1,0 +1,8 @@
+{
+  "name": "handoff",
+  "version": "0.1.0",
+  "description": "/handoff writes a note a fresh session can continue from; /handoff load picks it up",
+  "userConfig": {
+    "autoOnCompact": { "type": "boolean", "title": "Write a handoff before auto-compact", "description": "Save a handoff note each time the conversation auto-compacts", "default": true }
+  }
+}

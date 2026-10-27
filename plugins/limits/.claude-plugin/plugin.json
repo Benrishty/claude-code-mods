@@ -1,0 +1,8 @@
+{
+  "name": "limits",
+  "version": "0.1.0",
+  "description": "Status line: 5-hour and 7-day rate-limit usage with reset countdowns, toasts past a threshold",
+  "userConfig": {
+    "warnAt": { "type": "number", "title": "Warn at (% used)", "description": "Toast once per window when its usage crosses this percent", "default": 80 }
+  }
+}

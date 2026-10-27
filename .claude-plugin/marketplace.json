@@ -1,0 +1,10 @@
+{
+  "name": "claude-code-mods",
+  "owner": { "name": "Benrishty" },
+  "plugins": [
+    { "name": "cache", "source": "./plugins/cache" },
+    { "name": "limits", "source": "./plugins/limits" },
+    { "name": "handoff", "source": "./plugins/handoff" },
+    { "name": "imessage-bubbles", "source": "./plugins/imessage-bubbles", "description": "Draws your own chat messages as right-aligned blue iMessage-style bubbles" }
+  ]
+}
