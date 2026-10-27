@@ -33,7 +33,10 @@ let cache: { at: number; rows: Row[] } | null = null
 
 const NOT_SWITCHABLE = 'Not switchable yet. Ask Claude: add the /mods switch to this mod.'
 
-const homeOf = ($: EngineInterface) => $.plugin.root.split('/.claude/')[0] ?? ''
+// $HOME, read at session start. The root-based guess only holds for a mod under ~/.claude,
+// not one loaded straight from a marketplace folder.
+let homeDir = ''
+const homeOf = ($: EngineInterface) => homeDir || ($.plugin.root.split('/.claude/')[0] ?? '')
 const switchesPath = ($: EngineInterface) => `${homeOf($)}/.claude/mods/switches.json`
 
 function cut(s: string, n: number) {
@@ -128,12 +131,17 @@ async function readText($: EngineInterface, path: string) {
   }
 }
 
+// The last scan's first refusal other than a missing folder, shown under the list.
+let scanErr = ''
+
 // Folders (or links to folders) directly inside dir. A missing dir is an empty list.
 async function listDirs($: EngineInterface, dir: string) {
   try {
     const entries = await $.fs.list(dir)
     return entries.filter(x => !x.name.startsWith('.') && (x.kind === 'dir' || x.isLink)).map(x => `${dir}/${x.name}`)
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!scanErr && !/ENOENT|no such file/i.test(msg)) scanErr = `Could not look in ${dir}: ${msg}`
     return []
   }
 }
@@ -230,6 +238,7 @@ async function inspect($: EngineInterface, dir: string, chatOnly: boolean): Prom
 
 // Known mods first in their old order, then new ones A to Z, then this chat's own.
 async function scan($: EngineInterface): Promise<Row[]> {
+  scanErr = ''
   const home = homeOf($)
   const found = new Map<string, Row>()
   const dirs: [string, boolean][] = []
@@ -289,6 +298,7 @@ async function poll($: EngineInterface) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     try {
+      homeDir = (await $.env.get('HOME').catch(() => undefined)) ?? ''
       sid = await $.session.id()
       cache = null
       await $.command.register({ name: 'mods', description: 'Open the Mods pane: turn each mod on or off, or show or hide it, in every chat', immediate: true })
@@ -468,6 +478,7 @@ export const register: Register = on => {
           <Text dimColor wrap="wrap">
             New mods appear here by themselves.
           </Text>
+          {scanErr ? <Text wrap="wrap">{scanErr}</Text> : null}
         </Box>
       </Box>
     )
