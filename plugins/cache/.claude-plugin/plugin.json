@@ -1,9 +1,0 @@
-{
-  "name": "cache",
-  "version": "0.1.0",
-  "description": "Status line: prompt-cache hit rate and time until the cache goes cold",
-  "userConfig": {
-    "ttlMinutes": { "type": "string", "title": "Cache TTL (minutes)", "description": "Prompt-cache lifetime: 60 on subscription plans, 5 on the API default", "options": ["60", "5"], "default": "60" },
-    "warnSeconds": { "type": "number", "title": "Warn before expiry (seconds)", "description": "Toast this long before the cache goes cold; 0 turns it off", "default": 60 }
-  }
-}

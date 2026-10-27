@@ -1,6 +1,0 @@
-{
-  "name": "handoff",
-  "version": "0.1.0",
-  "description": "A Handoff button and /handoff command: writes a handoff doc from this session, then starts a fresh session pointed at it.",
-  "types": "./types/index.d.ts"
-}

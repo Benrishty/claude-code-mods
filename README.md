@@ -4,9 +4,6 @@ My Claude Code mods, packaged as a single plugin marketplace.
 
 | Mod | What it does |
 | --- | --- |
-| `cache` | Status line: prompt-cache hit rate and time until the cache goes cold |
-| `limits` | Status line: 5-hour and 7-day rate-limit usage with reset countdowns, toasts past a threshold |
-| `handoff` | A Handoff button and `/handoff` command: writes a handoff doc, then starts a fresh session pointed at it |
 | `imessage-bubbles` | Draws your own chat messages as right-aligned blue iMessage-style bubbles |
 
 ## Install
@@ -15,7 +12,7 @@ From a local clone:
 
 ```
 /plugin marketplace add C:\GithubLocal\claude-code-mods
-/plugin install cache@claude-code-mods
+/plugin install imessage-bubbles@claude-code-mods
 ```
 
 Or straight from GitHub (needs access to the private repo):
