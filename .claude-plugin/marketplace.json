@@ -2,6 +2,7 @@
   "name": "claude-code-mods",
   "owner": { "name": "Benrishty" },
   "plugins": [
+    { "name": "cache-keeper", "source": "./plugins/cache-keeper", "description": "Nate Herk's Cache Keeper: cache and plan-limit band, keep-warm, cold-send guard, /board, and /handoff (using Matt Pocock's handoff skill)" },
     { "name": "imessage-bubbles", "source": "./plugins/imessage-bubbles", "description": "Draws your own chat messages as right-aligned blue iMessage-style bubbles" }
   ]
 }
