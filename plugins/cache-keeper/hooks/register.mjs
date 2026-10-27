@@ -58,6 +58,12 @@ const alerted = new Map() // sessionId -> state or warning key already announced
 let paneOpen = false
 let justCompacted = false
 let handoffPending = false
+// The /mods switchboard turns this mod off in every chat with switches.json.
+// Off hides the band and footer, skips the cold-send guard, keep-warm and
+// alerts, and refuses the commands; the bookkeeping keeps running.
+const NAME = 'cache-keeper'
+const OFF_TEXT = 'Cache Keeper is off. Turn it on with /mods.'
+let off = false
 
 // The handoff flow. When Matt Pocock's handoff skill runs (the band's button,
 // /handoff, or typed), the document it writes during that turn is captured and
@@ -290,6 +296,20 @@ async function registerCommand($, name, description, argumentHint, immediate) {
   }
 }
 
+async function readSwitch($) {
+  let turnedOff = false
+  try {
+    const path = (home || '.') + '/.claude/mods/switches.json'
+    if (await $.fs.exists(path)) turnedOff = JSON.parse(String(await $.fs.read(path)))[NAME] === false
+  } catch {
+    turnedOff = off
+  }
+  if (turnedOff === off) return
+  off = turnedOff
+  if (off) stopKeepWarm($, 'Cache Keeper turned off')
+  $.ui.invalidate('ui.render')
+}
+
 async function readRecording($) {
   try {
     const path = (home || '.') + '/.claude/mods-data/recording.json'
@@ -358,7 +378,7 @@ function stopKeepWarm($, why) {
 }
 
 async function keepWarmStep($) {
-  if (!S.keepWarm) return
+  if (off || !S.keepWarm) return
   if (now >= S.keepWarmUntil) return stopKeepWarm($, 'time limit reached')
   if (S.working || !S.lastActivity) return
   const ttl = ttlMin()
@@ -385,7 +405,7 @@ async function keepWarmStep($) {
 }
 
 function warnStep($) {
-  if (!settings.alerts) return
+  if (off || !settings.alerts) return
   for (const hb of fleet) {
     if (hb.stale || hb.keepWarm || (hb.ctx || 0) < settings.bigTokens) continue
     const st = cacheState(hb)
@@ -461,6 +481,8 @@ export function register(on) {
     names.keepwarm = (await registerCommand($, 'keepwarm', 'Keep this session\'s prompt cache warm (default 4 hours), or /keepwarm off', '[hours|off]', true)) || names.keepwarm
     names.board = (await registerCommand($, 'board', 'Every local Claude Code session: state, context, cache, cost', '', true)) || names.board
     names.handoff = (await registerCommand($, 'handoff', 'Session handoff, then clear this chat and continue with it (/handoff continue)', '[what the next session is for | continue]')) || names.handoff
+    await readSwitch($).catch(() => {})
+    $.clock.every(3000, () => readSwitch($).catch(() => {}))
     $.clock.every(HEARTBEAT_EVERY, () => tick($).catch(() => {}))
     await heartbeat($, true)
     return next(e)
@@ -502,7 +524,7 @@ export function register(on) {
     const left = msLeft(S.lastActivity, ttl)
     const isCold = left !== null && left <= 0
     const fromUser = e.origin && (e.origin.kind === 'composer' || e.origin.kind === 'bridge')
-    if (!settings.guard || !fromUser || !isCold || S.ctx < settings.bigTokens || e.turnId) return next(e)
+    if (off || !settings.guard || !fromUser || !isCold || S.ctx < settings.bigTokens || e.turnId) return next(e)
     const cost = money(rewriteCost(S.ctx, S.model, ttl))
     let answer = 'Send anyway'
     try {
@@ -649,6 +671,7 @@ export function register(on) {
   // Both run off the hook: a command started inside a hook the session is
   // waiting on is refused.
   on('command.run', { command: ['handoff', 'ck-handoff'] }, async ($, e) => {
+    if (off) return { text: OFF_TEXT }
     now = await $.clock.now()
     const arg = String(e.args || '').trim().toLowerCase()
     if (arg === 'continue' || arg === 'go') {
@@ -662,6 +685,7 @@ export function register(on) {
   })
 
   on('command.run', { command: ['cache', 'ck-cache'] }, async ($, e) => {
+    if (off) return { text: OFF_TEXT }
     now = await $.clock.now()
     const [key, value] = String(e.args || '').trim().toLowerCase().split(/\s+/)
     if (key === 'ttl') {
@@ -680,6 +704,7 @@ export function register(on) {
   })
 
   on('command.run', { command: ['keepwarm', 'ck-keepwarm'] }, async ($, e) => {
+    if (off) return { text: OFF_TEXT }
     now = await $.clock.now()
     const arg = String(e.args || '').trim().toLowerCase()
     if (arg === 'off' || (arg === '' && S.keepWarm)) {
@@ -694,6 +719,7 @@ export function register(on) {
   })
 
   on('command.run', { command: ['board', 'ck-board'] }, async ($, e) => {
+    if (off) return { text: OFF_TEXT }
     now = await $.clock.now()
     await heartbeat($, true)
     await readFleet($)
@@ -712,7 +738,7 @@ export function register(on) {
   // The band above the prompt: this session's cache at a glance
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
-    if (e.props && e.props.hasSurvey) return below
+    if (off || (e.props && e.props.hasSurvey)) return below
     if (!S.lastActivity && !S.keepWarm) return below
     const { Box, Text, Button } = $.ui.resolve(e)
     const hb = myHeartbeat()
@@ -759,7 +785,7 @@ export function register(on) {
   // The band is terminal-only. The footer also draws in the Desktop app, so it
   // carries a short label, only when there's something to act on.
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
-    const label = footerLabel()
+    const label = off ? '' : footerLabel()
     if (!label) return next(e)
     const modes = Array.isArray(e.props && e.props.modes) ? e.props.modes : []
     return next({ ...e, props: { ...e.props, modes: [...modes, label] } })

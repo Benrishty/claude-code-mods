@@ -168,3 +168,72 @@ for (const surface of ['desktop', 'terminal'] as const) {
     expect(await v.find({ text: 'Zeta Notes is off in every chat.' }), 'note').toBeDefined()
   })
 }
+
+// installed_plugins.json decides: a directory marketplace's plugin is read from its folder,
+// not the stale copy in the cache, and a cache leftover that is not installed is not listed.
+const installedDisk: Record<string, string> = {
+  '/.claude/plugins/installed_plugins.json': JSON.stringify({
+    version: 2,
+    plugins: {
+      'bubbles@local': [{ scope: 'user', installPath: '/Users/test/.claude/plugins/cache/local/bubbles/0.1.0', version: '0.1.0' }],
+      'replay-theater@anthropic': [{ scope: 'user', installPath: '/Users/test/.claude/plugins/cache/anthropic/replay-theater/0.1.0', version: '0.1.0' }],
+    },
+  }),
+  '/.claude/plugins/known_marketplaces.json': JSON.stringify({
+    local: { source: { source: 'directory', path: '/repo' }, installLocation: '/repo' },
+    anthropic: { source: { source: 'github', repo: 'a/b' }, installLocation: '/Users/test/.claude/plugins/marketplaces/anthropic' },
+  }),
+  '/repo/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'bubbles', source: './plugins/bubbles' }] }),
+  '/repo/plugins/bubbles/.claude-plugin/plugin.json': JSON.stringify({ name: 'bubbles', description: 'Blue bubbles' }),
+  '/repo/plugins/bubbles/hooks/hooks.json': JSON.stringify({ modules: ['./register.tsx'] }),
+  '/repo/plugins/bubbles/hooks/register.tsx': "readSwitch('switches.json')",
+  '/.claude/plugins/cache/local/bubbles/0.1.0/.claude-plugin/plugin.json': JSON.stringify({ name: 'bubbles', description: 'Blue bubbles' }),
+  '/.claude/plugins/cache/local/bubbles/0.1.0/hooks/hooks.json': JSON.stringify({ modules: ['./register.tsx'] }),
+  '/.claude/plugins/cache/local/bubbles/0.1.0/hooks/register.tsx': '// before the switch',
+  '/.claude/plugins/cache/anthropic/replay-theater/0.1.0/.claude-plugin/plugin.json': JSON.stringify({ name: 'replay-theater', description: 'Replays each edit' }),
+  '/.claude/plugins/cache/anthropic/replay-theater/0.1.0/hooks/hooks.json': JSON.stringify({ modules: ['./register.tsx'] }),
+  '/.claude/plugins/cache/anthropic/replay-theater/0.1.0/hooks/register.tsx': "await $.command.register({ name: 'replay' })",
+  '/.claude/plugins/cache/local/leftover/0.1.0/.claude-plugin/plugin.json': JSON.stringify({ name: 'leftover', description: 'Not installed' }),
+  '/.claude/plugins/cache/local/leftover/0.1.0/hooks/hooks.json': JSON.stringify({ modules: ['./register.tsx'] }),
+}
+const installedDirsOnDisk: Record<string, string[]> = {
+  '/.claude/plugins/cache': ['local', 'anthropic'],
+  '/.claude/plugins/cache/local': ['bubbles', 'leftover'],
+  '/.claude/plugins/cache/local/leftover': ['0.1.0'],
+}
+
+for (const surface of ['desktop', 'terminal'] as const) {
+  test(`follows installed_plugins.json, and a directory marketplace's own folder (${surface})`, { timeoutMs: 20000 }, async ($, on) => {
+    const onDisk = (path: string) => Object.keys(installedDisk).find(k => path.endsWith(k))
+    on('session.start', async ($, e) => ({ cwd: e.cwd }) as never)
+    on('session.id', async () => ({ value: 'sid-123' }) as never)
+    on('command.register', async () => ({ value: undefined }) as never)
+    mock.clock(on, { now: new Date(2026, 9, 16, 9, 0).getTime() })
+    on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }) as never)
+    on('fs.exists', async ($, e) => ({ value: onDisk((e as { path: string }).path) !== undefined }) as never)
+    on('fs.read', async ($, e) => {
+      const k = onDisk((e as { path: string }).path)
+      if (k === undefined) throw new Error('ENOENT')
+      return { value: installedDisk[k] } as never
+    })
+    on('fs.write', async () => ({ value: undefined }) as never)
+    on('fs.list', async ($, e) => {
+      const path = ((e as { path?: string }).path ?? '').replace(/\/+$/, '')
+      const dir = Object.keys(installedDirsOnDisk).find(k => path.endsWith(k))
+      if (dir) return { value: (installedDirsOnDisk[dir] ?? []).map(name => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false })) } as never
+      const names = [...new Set(Object.keys(installedDisk).filter(k => path.endsWith(k.slice(0, k.lastIndexOf('/')))).map(k => k.slice(k.lastIndexOf('/') + 1)))]
+      if (!names.length) throw new Error(`ENOENT ${path}`)
+      return { value: names.map(name => ({ name, kind: 'file', size: 10, mtimeMs: 0, isLink: false })) } as never
+    })
+    mock.env(on, { HOME: '/Users/test' })
+
+    await $.session.start({ source: 'startup', cwd: '/Users/test/vault', surface, isInteractive: true } as never)
+    await $.command.run({ command: 'mods', args: '' } as never)
+    const v = await $.ui.mount({ plugin: 'mods', surface, component: 'Pane', requestId: 'mods', props })
+
+    expect(await v.find({ key: 'toggle-bubbles' }), 'read from the repo folder, which has the switch').toBeDefined()
+    expect(await v.find({ text: 'Replay Theater' }), 'a github marketplace plugin, from its installPath').toBeDefined()
+    expect(await v.find({ text: 'Leftover' }), 'a cache folder that is not installed').toBeUndefined()
+  })
+}

@@ -146,7 +146,46 @@ async function listDirs($: EngineInterface, dir: string) {
   }
 }
 
-// Plugins installed from a marketplace: ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>, newest version name last.
+// Plugins installed from a marketplace, where they load from: installed_plugins.json's
+// installPath, except that a directory marketplace's plugins load from the marketplace
+// folder itself, not the copy in the cache. Null when the record is missing.
+async function installedDirs($: EngineInterface, home: string): Promise<string[] | null> {
+  const installed = parse(await readText($, `${home}/.claude/plugins/installed_plugins.json`)).plugins
+  if (!installed || typeof installed !== 'object') return null
+  const markets = parse(await readText($, `${home}/.claude/plugins/known_marketplaces.json`))
+  const sources = new Map<string, Record<string, unknown>>()
+  const out: string[] = []
+  for (const [id, entries] of Object.entries(installed as Record<string, unknown>)) {
+    const at = id.lastIndexOf('@')
+    const plugin = id.slice(0, at)
+    const market = id.slice(at + 1)
+    const m = markets[market] as { source?: { source?: string }; installLocation?: string } | undefined
+    if (at > 0 && m?.source?.source === 'directory' && m.installLocation) {
+      let listed = sources.get(market)
+      if (!listed) {
+        listed = {}
+        const manifest = parse(await readText($, `${m.installLocation}/.claude-plugin/marketplace.json`)).plugins
+        for (const p of Array.isArray(manifest) ? manifest : []) {
+          const { name, source } = (p ?? {}) as { name?: unknown; source?: unknown }
+          if (typeof name === 'string') listed[name] = source
+        }
+        sources.set(market, listed)
+      }
+      const source = listed[plugin]
+      if (typeof source === 'string') {
+        out.push(`${m.installLocation}/${source.replace(/^\.\//, '')}`.replace(/\/+$/, ''))
+        continue
+      }
+    }
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const path = (entry as { installPath?: unknown })?.installPath
+      if (typeof path === 'string' && path) out.push(path)
+    }
+  }
+  return out
+}
+
+// Fallback without installed_plugins.json: ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>, newest version name last.
 async function cacheDirs($: EngineInterface, home: string) {
   const out: string[] = []
   for (const market of await listDirs($, `${home}/.claude/plugins/cache`)) {
@@ -244,7 +283,7 @@ async function scan($: EngineInterface): Promise<Row[]> {
   const dirs: [string, boolean][] = []
   for (const d of await listDirs($, `${home}/.claude/mods`)) dirs.push([d, false])
   for (const d of await envDirs($)) dirs.push([d, false])
-  for (const d of await cacheDirs($, home)) dirs.push([d, false])
+  for (const d of (await installedDirs($, home)) ?? (await cacheDirs($, home))) dirs.push([d, false])
   if (sid) for (const d of await listDirs($, `${home}/.claude/dev-mods/${sid}`)) dirs.push([d, true])
   const seen = new Set<string>()
   for (const [dir, chatOnly] of dirs) {

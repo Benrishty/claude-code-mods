@@ -9,9 +9,9 @@ My Claude Code mods, packaged as a single plugin marketplace.
 | `mods` | Ben AI's `/mods` pane: lists every mod it finds on this Mac (including marketplace installs) with an On/Off switch that applies in every chat, via `~/.claude/mods/switches.json` |
 | `imessage-bubbles` | Draws your own chat messages as right-aligned blue iMessage-style bubbles |
 
-`cache-keeper` is copied from Nate Herk's [claude-code-mods](https://github.com/nateherkai/claude-code-mods) (MIT). The one change: its handoff runs Matt Pocock's `handoff` skill instead of Nate's `/session-handoff`, so it needs `claude plugin install mattpocock-skills@mattpocock`.
+`cache-keeper` is copied from Nate Herk's [claude-code-mods](https://github.com/nateherkai/claude-code-mods) (MIT). Changes: it reads the `/mods` switch, and its handoff runs Matt Pocock's `handoff` skill instead of Nate's `/session-handoff`, so it needs `claude plugin install mattpocock-skills@mattpocock`.
 
-`brain-dump` (0.2.0) and `mods` (0.3.0) are copied from Ben AI's benai-mods. `brain-dump` is unchanged; `mods` has its built-in list trimmed to `brain-dump` (Ben's other six mods aren't here), and its tests updated to match. `brain-dump` reads the `/mods` switches; `cache-keeper` and `imessage-bubbles` don't yet, so the pane shows them as "Not switchable yet".
+`brain-dump` (0.2.0) and `mods` (0.3.0) are copied from Ben AI's benai-mods. Both read `$HOME` instead of guessing it from the plugin folder, which broke when loaded from this repo; `mods` also has its built-in list trimmed to `brain-dump` (Ben's other six mods aren't here), and its tests updated to match. Every mod here reads the `/mods` switches. Off for `cache-keeper` hides its band and footer, skips the cold-send guard, keep-warm and alerts, and refuses its commands.
 
 ## Install
 
