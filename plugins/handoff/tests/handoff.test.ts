@@ -1,34 +1,80 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
 
-const USAGE = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
-const RUN = { command: 'handoff', origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 120 } }
-// The engine hands hooks native paths; the fake filesystem keys on forward slashes.
-const slash = (p: string) => p.replace(/\\/g, '/')
-const DIR = 'C:/Users/me/.claude/handoffs/C-Work-Proj'
+const RUN = {
+  command: 'handoff-new',
+  args: 'finish the tests',
+  origin: { kind: 'composer' },
+  presentation: { isFullscreen: false, columns: 120 },
+} as const
 
-test('writes a note from a fork, then loads it into the prompt', async ($, on) => {
-  mock.clock(on, { now: Date.parse('2026-10-09T12:05:00Z') })
-  mock.env(on, { USERPROFILE: 'C:\\Users\\me' })
-  const files = new Map<string, string>()
-  const fills: string[] = []
-  const asks: string[] = []
-  on('session.root', () => ({ value: 'C:\\Work\\Proj' }))
-  on('session.id', () => ({ value: 'sess1' }))
-  on('ui.status', () => ({ value: undefined }))
-  on('model.fork', ($, e) => (asks.push(e.prompt), { value: { isAnswered: true as const, text: '## Goal\nship it\n', usage: USAGE } }))
-  on('fs.write', ($, e) => (files.set(slash(e.path), e.text), { value: undefined }))
-  on('fs.list', ($, e) => ({
-    value: [...files.keys()]
-      .filter(p => p.startsWith(`${slash(e.path)}/`))
-      .map(p => ({ name: p.slice(slash(e.path).length + 1), kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false })),
+const DOC = 'C:\\Users\\me\\AppData\\Local\\Temp\\handoff-abc.md'
+
+function fakeEngine(on: On, skillInstalled = true) {
+  const commands: { command: string; args: string }[] = []
+  const prompts: string[] = []
+  on('command.list', async () => ({
+    value: skillInstalled
+      ? [{ name: 'mattpocock-skills:handoff', description: 'handoff', source: 'plugin' as never }]
+      : [],
   }))
-  on('prompt.fill', ($, e) => (fills.push(e.text), { isFilled: true }))
+  on('command.run', async (_$, e, next) => {
+    if (e.command === 'handoff-new') return next(e)
+    commands.push({ command: e.command, args: e.args })
+    return {}
+  })
+  on('prompt.submit', async (_$, e) => {
+    prompts.push(e.text)
+    return { text: e.text } as never
+  })
+  on('ui.status', async () => ({ value: undefined }) as never)
+  on('ui.toast', async () => ({ value: undefined }) as never)
+  on('tool.call', async () => ({ result: 'ok', text: 'ok' }) as never)
+  on('turn.complete', async (_$, e) => ({ text: e.answer }))
+  return { commands, prompts }
+}
 
-  const wrote = await $.command.run({ ...RUN, args: 'the migration' })
-  expect(wrote.text).toContain(`${DIR}/2026-10-09T1205.md`)
-  expect(asks[0]).toContain('Give extra weight to: the migration')
-  expect(files.get(`${DIR}/2026-10-09T1205.md`)).toContain('## Goal\nship it')
+const turnDone = (answer: string) =>
+  ({ answer, durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' }) as never
 
-  await $.command.run({ ...RUN, args: 'load' })
-  expect(fills[0]).toContain(`${DIR}/2026-10-09T1205.md`)
+test('runs the mattpocock handoff skill, then clears and points the new session at its doc', async ($, on) => {
+  const clock = mock.clock(on)
+  const { commands, prompts } = fakeEngine(on)
+
+  const { text } = await $.command.run(RUN)
+  expect(text).toContain('mattpocock-skills:handoff')
+  await clock.settle()
+  expect(commands).toEqual([{ command: 'mattpocock-skills:handoff', args: 'finish the tests' }])
+
+  // the skill's turn writes the doc, then ends
+  const callTool = ($ as unknown as { tool: { call: (input: unknown) => Promise<unknown> } }).tool.call
+  await callTool({ tool: 'Write', file_path: DOC, content: '# Handoff', tool_use_id: 'w1' })
+  await $.turn.complete(turnDone('Saved the handoff.'))
+  await clock.settle()
+
+  expect(commands.map(c => c.command)).toEqual(['mattpocock-skills:handoff', 'clear'])
+  expect(prompts.length).toBe(1)
+  expect(prompts[0]).toContain(DOC)
+})
+
+test('falls back to the path named in the reply when no Write was seen', async ($, on) => {
+  const clock = mock.clock(on)
+  const { prompts } = fakeEngine(on)
+
+  await $.command.run(RUN)
+  await clock.settle()
+  await $.turn.complete(turnDone(`Handoff saved to \`${DOC}\`.`))
+  await clock.settle()
+
+  expect(prompts[0]).toContain(DOC)
+})
+
+test('skill not installed: nothing runs', async ($, on) => {
+  const clock = mock.clock(on)
+  const { commands } = fakeEngine(on, false)
+
+  const { text } = await $.command.run(RUN)
+  await clock.settle()
+  expect(text).toContain('not installed')
+  expect(commands).toEqual([])
 })
