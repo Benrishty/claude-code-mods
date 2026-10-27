@@ -4,6 +4,7 @@
   "plugins": [
     { "name": "brain-dump", "source": "./plugins/brain-dump", "description": "Ben AI's Brain Dump: offers to shape a long, loose prompt into a four-part brief (the job, the why, the guardrails, done means), asking up to three questions about real gaps first" },
     { "name": "cache-keeper", "source": "./plugins/cache-keeper", "description": "Nate Herk's Cache Keeper: cache and plan-limit band, keep-warm, cold-send guard, /board, and /handoff (using Matt Pocock's handoff skill)" },
+    { "name": "mods", "source": "./plugins/mods", "description": "Ben AI's /mods pane: finds every mod on this Mac, also ones installed from a marketplace, and turns each one on or off in every chat" },
     { "name": "imessage-bubbles", "source": "./plugins/imessage-bubbles", "description": "Draws your own chat messages as right-aligned blue iMessage-style bubbles" }
   ]
 }
