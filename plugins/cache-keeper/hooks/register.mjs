@@ -15,6 +15,15 @@ import { makeMasker } from './privacy.mjs'
 const MIN = 60000
 const HEARTBEAT_EVERY = 30000
 const PANE = 'cache-board'
+// The band's colors and countdown bar, after Ben AI's Cache Clock
+const GOOD = '#16a34a'
+const WARN = '#ca8a04'
+const BAD = '#dc2626'
+const COLD = '#2563eb'
+const BAR = 12
+// Context and plan-limit meters: shorter bars, green to yellow to red as they fill
+const METER = 6
+const LIMIT_NAME = { five_hour: '5h', seven_day: 'Week', spend_limit: 'Spend' }
 
 // This session
 const S = {
@@ -235,6 +244,40 @@ function limitTone(limits, extra) {
 
 function money(v) {
   return rec.strict ? '$•••' : usd(v)
+}
+
+function fillColor(pct) {
+  return pct >= 85 ? BAD : pct >= 60 ? WARN : GOOD
+}
+
+// One meter's pieces: icon and name, the percent in bold, a bar that fills up, then dim
+// detail. Pieces, not a Text, so several share one line that truncates instead of wrapping.
+function meter(Text, icon, name, pct, detail) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0))
+  const filled = Math.round((p / 100) * METER)
+  const color = fillColor(p)
+  return [
+    Text({ color, children: [`${icon} ${name} `] }),
+    Text({ color, bold: true, children: [`${Math.round(p)}%`] }),
+    Text({ children: [' '] }),
+    Text({ color, children: ['━'.repeat(filled)] }),
+    Text({ dimColor: true, children: ['━'.repeat(METER - filled)] }),
+    Text({ dimColor: true, children: [detail ? ` ${detail}` : ''] }),
+  ]
+}
+
+// When a window resets: "2:10pm" today, "Wed 7pm" later on
+function resetsText(iso) {
+  const at = Date.parse(iso || '')
+  if (!at) return ''
+  const time = clock(at).replace(':00', '')
+  if (new Date(at).toDateString() === new Date(now).toDateString()) return time
+  return new Date(at).toLocaleDateString('en-US', { weekday: 'short' }) + ' ' + time
+}
+
+function mmss(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000))
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0')
 }
 
 function msLeft(lastActivity, ttl) {
@@ -484,6 +527,12 @@ export function register(on) {
     await readSwitch($).catch(() => {})
     $.clock.every(3000, () => readSwitch($).catch(() => {}))
     $.clock.every(HEARTBEAT_EVERY, () => tick($).catch(() => {}))
+    // The band's countdown moves every second while there is one to show
+    $.clock.every(1000, async () => {
+      if (off || S.working || (!S.lastActivity && !S.keepWarm)) return
+      now = await $.clock.now()
+      $.ui.invalidate('ui.render')
+    })
     await heartbeat($, true)
     return next(e)
   })
@@ -735,46 +784,76 @@ export function register(on) {
     return next(e)
   })
 
-  // The band above the prompt: this session's cache at a glance
+  // The band above the prompt, after Ben AI's Cache Clock: one sentence with a live
+  // countdown and bar, the buttons at the right, and the numbers dim beneath.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
-    if (off || (e.props && e.props.hasSurvey)) return below
+    if (off || (e.props && (e.props.hasSurvey || e.props.isWorking)) || S.working) return below
     if (!S.lastActivity && !S.keepWarm) return below
     const { Box, Text, Button } = $.ui.resolve(e)
-    const hb = myHeartbeat()
-    const st = cacheState(hb)
+    const st = cacheState(myHeartbeat())
+    if (st.kind === 'unknown') return below
     const ttl = ttlMin()
     const big = S.ctx >= settings.bigTokens
-    const parts = []
-    if (st.kind === 'kept') parts.push(Text({ color: 'cyan', children: [`◆ kept warm · ${S.pings} ping${S.pings === 1 ? '' : 's'} ${money(S.pingUsd)} · until ${clock(S.keepWarmUntil)}`] }))
-    else if (st.kind === 'warm') parts.push(Text({ color: 'green', children: [`● cache warm ${minutes(st.left)}`] }))
-    else if (st.kind === 'cooling') parts.push(Text({ color: 'yellow', bold: true, children: [`◐ cache cools in ${minutes(st.left)}`] }))
-    else if (st.kind === 'cold') parts.push(Text(big ? { color: 'red', bold: true, children: [`○ cache cold ${minutes(-st.left)}`] } : { dimColor: true, children: [`○ cache cold ${minutes(-st.left)}`] }))
-    parts.push(Text({ dimColor: true, children: [` │ ctx ${tokens(S.ctx)}`] }))
-    if (st.kind === 'cold' && big) parts.push(Text({ color: 'red', children: [` │ next send rewrites it ≈ ${money(rewriteCost(S.ctx, S.model, ttl))}`] }))
-    else parts.push(Text({ dimColor: true, children: [` │ rewrite ≈ ${money(rewriteCost(S.ctx, S.model, ttl))}`] }))
-    if (S.rateLimits.length) parts.push(Text(limitTone(S.rateLimits, { children: [' │ ' + limitsText(S.rateLimits)] })))
-    parts.push(Text({ dimColor: true, children: [` │ session ${money(S.costUsd)}`] }))
-    if (S.coldRestarts.length) parts.push(Text({ dimColor: true, children: [` │ ${S.coldRestarts.length} cold restart${S.coldRestarts.length === 1 ? '' : 's'} ${money(S.coldRestarts.reduce((a, c) => a + c.usd, 0))}`] }))
-    const row = [Box({ flexDirection: 'row', children: parts })]
-    if (st.kind === 'cooling' && big) {
-      row.push(Button({ key: 'keepwarm', label: 'keep warm', hotkey: '1', plain: true, onPress: async () => { now = await $.clock.now(); startKeepWarm($, settings.keepWarmHours); await heartbeat($, true); $.ui.invalidate('ui.render') } }))
-    } else if (st.kind === 'kept') {
-      row.push(Button({ key: 'keepwarm', label: 'stop warm', hotkey: '1', plain: true, onPress: async () => { now = await $.clock.now(); stopKeepWarm($, 'turned off'); await heartbeat($, true); $.ui.invalidate('ui.render') } }))
+    const ctx = `${tokens(S.ctx)} tokens`
+
+    let head
+    if (st.kind === 'kept') {
+      head = Text({ wrap: 'truncate-end', children: [
+        Text({ color: COLD, bold: true, children: ['◆ Kept warm'] }),
+        Text({ dimColor: true, children: [` until ${clock(S.keepWarmUntil)} · ${S.pings} ping${S.pings === 1 ? '' : 's'}, ${money(S.pingUsd)}`] }),
+      ] })
+    } else if (st.kind === 'cold') {
+      head = Text({ wrap: 'truncate-end', children: [
+        Text({ color: COLD, children: ['❄ Cache cold'] }),
+        Text({ dimColor: true, children: [` ${minutes(-st.left)} · next message rewrites ${ctx}, ≈ ${money(rewriteCost(S.ctx, S.model, ttl))}`] }),
+      ] })
+    } else {
+      const share = Math.max(0, Math.min(1, st.left / (ttl * MIN)))
+      const filled = Math.max(1, Math.round(share * BAR))
+      const color = st.left <= MIN ? BAD : share < 0.5 ? WARN : GOOD
+      head = Text({ wrap: 'truncate-end', children: [
+        Text({ color, children: ['◷ Cache warm '] }),
+        Text({ color, bold: true, children: [mmss(st.left)] }),
+        Text({ children: [' '] }),
+        Text({ color, children: ['━'.repeat(filled)] }),
+        Text({ dimColor: true, children: ['━'.repeat(BAR - filled)] }),
+        Text({ dimColor: true, children: [` ${ttl}m cache · replies read ${ctx} at 1/10 cost`] }),
+      ] })
     }
-    const left = Box({ flexDirection: 'row', columnGap: 2, children: row })
-    // Right edge: one click runs the handoff skill (h while the band has the focus;
-    // a letter never fires from the prompt box, unlike a digit). Once a handoff
-    // is in, c clears this chat and sends it as the fresh chat's first prompt.
-    const busy = handoffPending || H.armed
-    const handoff = Button({ key: 'handoff', label: handoffPending ? 'handoff queued' : H.armed ? 'handoff running' : 'handoff', hotkey: 'h', plain: true, dimColor: busy, onPress: () => runHandoff($) })
-    let right = handoff
+
+    // Handoff: running, then ready to clear and continue; the main action once a big chat is cold.
+    const buttons = []
     if (H.text || H.continuing) {
-      const go = Button({ key: 'continue', label: H.continuing ? 'clearing' : 'clear and continue', hotkey: 'c', plain: true, onPress: () => clearAndContinue($) })
-      right = Box({ flexDirection: 'row', columnGap: 2, children: [go, handoff] })
+      buttons.push(Button({ key: 'continue', label: H.continuing ? 'Clearing' : 'Clear and continue', hotkey: 'c', variant: 'primary', dimColor: H.continuing, onPress: () => clearAndContinue($) }))
     }
-    const mine = Box({ flexDirection: 'row', justifyContent: 'space-between', width: '100%', columnGap: 2, children: [left, right] })
-    return Box({ flexDirection: 'column', children: below ? [mine, below] : [mine] })
+    const busy = handoffPending || H.armed
+    const coldAndBig = st.kind === 'cold' && big
+    buttons.push(Button({
+      key: 'handoff',
+      label: handoffPending ? 'Handoff queued' : H.armed ? 'Handoff running' : H.text ? 'Hand off again' : coldAndBig ? 'Hand off to a fresh chat' : 'Hand off',
+      hotkey: 'h',
+      variant: coldAndBig && !busy && !H.text ? 'primary' : undefined,
+      dimColor: busy,
+      onPress: () => runHandoff($),
+    }))
+    buttons.push(st.kind === 'kept'
+      ? Button({ key: 'keepwarm', label: 'Stop keeping warm', hotkey: '1', onPress: async () => { now = await $.clock.now(); stopKeepWarm($, 'turned off'); await heartbeat($, true); $.ui.invalidate('ui.render') } })
+      : Button({ key: 'keepwarm', label: 'Keep warm', hotkey: '1', onPress: async () => { now = await $.clock.now(); startKeepWarm($, settings.keepWarmHours); await heartbeat($, true); $.ui.invalidate('ui.render') } }))
+
+    // One line under it: context, then plan limits
+    const sep = () => Text({ dimColor: true, children: ['  ·  '] })
+    const stats = S.window
+      ? meter(Text, '◧', 'Context', (S.ctx / S.window) * 100, `${tokens(S.ctx)}/${tokens(S.window)}`)
+      : [Text({ dimColor: true, children: [`◧ Context ${tokens(S.ctx)}`] })]
+    for (const l of S.rateLimits) stats.push(sep(), ...meter(Text, '◔', LIMIT_NAME[l.kind] || l.kind, l.percentUsed, resetsText(l.resetsAt)))
+    if (S.coldRestarts.length) stats.push(sep(), Text({ dimColor: true, children: [`${S.coldRestarts.length} cold restart${S.coldRestarts.length === 1 ? '' : 's'}`] }))
+    const rows = [
+      Box({ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 1, children: [head, Box({ flexDirection: 'row', gap: 1, flexShrink: 0, children: buttons })] }),
+      Text({ wrap: 'truncate-end', children: stats }),
+    ]
+    const mine = Box({ flexDirection: 'column', children: rows })
+    return Box({ flexDirection: 'column', children: below ? [below, mine] : [mine] })
   })
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
